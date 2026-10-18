@@ -146,6 +146,11 @@ class EngramLoader(importlib.abc.Loader):
             if os.environ.get('DSV41_BLOCK_VERIFY', '0').strip() not in ('0', 'off', 'false', ''):
                 from block_verify import install as install_block_verify
                 install_block_verify(module)
+            # Gated on DSV41_RELAXED_ACCEPT (fast mode, NOT EXACT): relaxed greedy acceptance.
+            # Last in this branch, so it replaces whatever greedy accept the branch installed.
+            if os.environ.get('DSV41_RELAXED_ACCEPT', '').strip() not in ('', '0', 'off', 'false'):
+                from relaxed_accept import install_accept as install_relaxed_accept
+                install_relaxed_accept(module)
         elif module.__name__ == 'sglang.srt.speculative.dspark_components.dspark_verify':
             # Gated on DSV41_SPEC_SYNC_FREE (adapter/spec_sync_free.py). First in this branch: its
             # merge mode checks the engine's own DsparkVerifyEpilogue._accept source.
@@ -171,6 +176,11 @@ class EngramLoader(importlib.abc.Loader):
             if os.environ.get('DSV41_DRAFT_CAPTURE', '0').strip() not in ('0', 'off', 'false', ''):
                 from draft_capture import install as install_draft_capture
                 install_draft_capture(module)
+            # Gated on DSV41_RELAXED_ACCEPT (fast mode, NOT EXACT): rebinds the in-graph epilogue's
+            # accept_greedy_triton to the relaxed one patched into dspark_accept. Last in this branch.
+            if os.environ.get('DSV41_RELAXED_ACCEPT', '').strip() not in ('', '0', 'off', 'false'):
+                from relaxed_accept import install_verify as install_relaxed_verify
+                install_relaxed_verify(module)
         elif module.__name__ == 'sglang.kernels.ops.moe.moe_fused_gate':
             if os.environ.get('DSV41_VERIFY_CAP', '').strip() not in ('', '0', 'off'):
                 from verify_cap import install_gate as install_verify_cap_gate

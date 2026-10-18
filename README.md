@@ -14,8 +14,43 @@ Everything else is knapcio's work and is unchanged. The numbers in "Current resu
 - Ring environment we booted from: [`.env.tp4.1017-ring.example`](.env.tp4.1017-ring.example)
 - Raw results: [`docs/results/ds1017/`](docs/results/ds1017/)
 - Hairpin mesh through one switch hop (software port-role swap, GID fix, test, A/B results): [adapt-ai-systems/gb10-hairpin-ring-switch-hop](https://github.com/adapt-ai-systems/gb10-hairpin-ring-switch-hop)
+- Opt-in fast mode (not exact), about 100 tok/s single-chat prose: [Fast mode (not exact)](#fast-mode-not-exact)
 
 Credit for the recipe goes to Mia (MiaAI-Lab), knapcio, and the sparkring authors; see Credits below. The licence is unchanged (AGPL-3.0).
+
+## Fast mode (not exact)
+
+<p align="center"><img src="docs/img/ds-fast-mode-100.png" alt="Fast mode (not exact): prose c1 100.8 tok/s vs 85.6 exact" width="100%"></p>
+
+**Off by default. The default boot stays exact (greedy output identical to the model).** Fast mode changes the output text. Use it at your own risk.
+
+Fast mode relaxes DSpark's greedy acceptance (`adapter/relaxed_accept.py`). The stock rule accepts a draft token only when it is the target's argmax. Fast mode also accepts it when it is close enough to the argmax: with `DSV41_RELAXED_ACCEPT=topp:0.9,ratio:0.1`, the target's probability mass above the draft token must be below 0.9, and the draft token's probability must be at least 0.1 x the argmax's. More drafts are accepted per verify step, so prose decodes faster. Sampled (non-greedy) requests keep the stock rule.
+
+**Turn it on:** in `EXTRA_CONTAINER_ENV`, add `DSV41_RELAXED_ACCEPT=topp:0.9,ratio:0.1` and set `DSV41_CERT_HEAD=0` (`.env.tp4.1017-ring.example` has `DSV41_CERT_HEAD=1`). Fast mode needs the full-vocabulary logits and refuses to start with the certified head on. Rebuild the image (the adapter is copied in at build time) and restart. Every rank logs `[relaxed_accept] ON {'ratio': 0.1, 'topp': 0.9, ...} (NOT EXACT)` and `[relaxed_accept] dspark_verify epilogue rebound`.
+
+**Turn it off:** remove `DSV41_RELAXED_ACCEPT` (or set it to `0`), set `DSV41_CERT_HEAD=1` again, and restart. The `[relaxed_accept]` lines are then absent.
+
+**Status of this build:** the numbers below were measured with the same `relaxed_accept.py` loaded through an outer `sitecustomize` in the same install order. The built-in hook in this repo passes the CPU test and a wiring check, but it has not yet been booted on the cluster. Check for the two log lines above after your first boot.
+
+**Measured** on 2026-10-17 on 4x GB10 with the serve config in [`docs/deepseek-v4.1-flash-1017.md`](docs/deepseek-v4.1-flash-1017.md#serve-config-we-adopted-dual-pci-nccl-plus-hairpin-mesh) (dual-PCI NCCL plus hairpin mesh), sparkDash 1.8.8, 256 new tokens, temperature 0, thinking off, median of 3 runs. The exact rows include the certified head; fast mode runs without it.
+
+| row | exact | fast mode | change |
+|---|---:|---:|---:|
+| prose c1, full GPU clock | 85.6 | **100.8** | +17.8 % |
+| prose c1, 2200 MHz cap | 84.3 | 99.5 | +18.0 % |
+| prose c4 aggregate, 2200 MHz cap | 175.9 | 204.5 | +16 % |
+| code c1, 2200 MHz cap | 137.5 | 140.6 | +2.3 % |
+| structured c1, 2200 MHz cap | 154.9 | 155.2 | +0.2 % |
+| prose tokens per verify step (accepted drafts + 1) | 3.12 | 3.76 | +20.5 % |
+
+Code and structured text barely change: their drafts already match the argmax, so there is little left to relax.
+
+**Quality:**
+- `scripts/qeval.py` (75 tasks, c1): 73/75 in all 3 runs (exact serve: 71/75).
+- `scripts/ds_gate.py kld` against exact-serve collects of the same day: short 0.01269, long 0.00257 (limit 0.035), pass. This check compares the target's distributions on the same prefix, which fast mode does not change, so it cannot see the relaxed tokens.
+- **Token fidelity: below our bar.** On fast mode's own greedy continuations of the `ds_gate.py` panels, the share of emitted tokens that are the target's argmax is 88.85 % (short panel) and 88.67 % (long panel). The mean extra negative log-likelihood is 0.1036 and 0.0891 nats per token. Scored the same way, the exact serve gets 98.18 % and 99.41 % and 0.0000. Our bar was 90 % and 0.10, so fast mode fails it. The output leaves the exact output after a median of about 9 tokens.
+
+Test (CPU, no GPU or engine needed): `PYTHONPATH=adapter python3 tests/test_relaxed_accept.py` checks the rule against a copy of the stock greedy rule (ratio 1.0 gives the stock result), the ratio and top-p boundaries, the certified-head refusal and that nothing is patched when the flag is off.
 
 ## Credits
 
